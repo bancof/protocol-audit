@@ -16,7 +16,6 @@ import "./TreasuryLogic.sol";
 import "./PolicyLogic.sol";
 import "./boundnft/BoundNFTManager.sol";
 
-// Do not change the inheritance order
 contract PoolLogic is
   ReentrancyGuardUpgradeable,
   GlobalBeaconProxyImpl,
@@ -53,7 +52,6 @@ contract PoolLogic is
     uint256[] collateralAmounts;
   }
 
-  // event Borrowed(address indexed borrower, bytes32 lastLoanHash, bytes32 newLoanHash);
   event Borrowed(PolicyLogic.InterestInfo interestInfo, bytes32 lastLoanHash, Loan newLoan);
   event Repaid(bool isComplete, bytes32 repayLoanHash, LoanPartialUpdateInfo updateInfo);
   event Liquidated(bytes32 loanHash);
@@ -61,13 +59,10 @@ contract PoolLogic is
   bytes32 public constant ADMIN = keccak256("ADMIN");
   bool public frozen;
 
-  TreasuryLogic public treasury; // proxied
-  PolicyLogic public policy; // proxied
+  TreasuryLogic public treasury;
+  PolicyLogic public policy;
 
-  // The rationale for this seemingly weird design:
-  // The interest rate is fundamentally different from others as it is the only variable that is a function of the others, and is not determined by the borrower.
-  // This design makes interest-free loans impossible. (Who does that anyway?) Such loans could be encoded with MAX_INT in the future, if required.
-  mapping(bytes32 => PolicyLogic.InterestInfo) public loanInterestInfo; // keccak256(Loan) => interestRateBP; 0 if not exists;
+  mapping(bytes32 => PolicyLogic.InterestInfo) public loanInterestInfo;
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.LENDING_POOL_IMPL) {}
 
@@ -80,7 +75,6 @@ contract PoolLogic is
     _takeMoney(getInitialFeeToken(), 0, getInitialFee(), true, msg.value);
   }
 
-  // supply lastLoan to renew an existing loan
   function borrow(
     Loan memory newLoan,
     bytes32 r,
@@ -152,9 +146,6 @@ contract PoolLogic is
     _takeMoney(newLoan.principalToken, communityShare, developerFee + principalFee, true, msg.value);
 
     emit Borrowed(interestInfo, lastHash, newLoan);
-    // 이걸 리턴하는 이유는 static call을 통해 실제 이율을 미리 조회할 수 있기 때문입니다.
-    // 특히 기존 스펙대로 대출 상세에 따라 이율이 달라지는 경우 필요합니다.
-    // 고정이율로 바뀌었지만 프론트엔드가 policy와 직접 상호작용하는 것은 캡슐화측면에서도 바람직하지 않으니 유지하는 것이 좋을 것 같습니다.
     return interestInfo.interestRateBP;
   }
 
@@ -182,19 +173,6 @@ contract PoolLogic is
       return (0, communityShare - loan.principal, developerFee);
     }
   }
-
-  // function repay(Loan memory loan) external payable nonReentrant {
-  //   // To avoid loan.collateralAmounts and repayAmounts from being same reference
-  //   uint256[] memory repayAmounts = new uint256[](loan.collateralAmounts.length);
-  //   for (uint256 i = 0; i < loan.collateralAmounts.length; ++i) {
-  //     repayAmounts[i] = loan.collateralAmounts[i];
-  //   }
-  //   _repayPartial(loan, repayAmounts, true, msg.value);
-  // }
-
-  // function repayPartial(Loan memory loan, uint256[] memory repayAmounts) external payable nonReentrant {
-  //   _repayPartial(loan, repayAmounts, true, msg.value);
-  // }
 
   function repay(Loan[] memory loans, uint256[][] memory repayAmountsArray) external payable {
     uint256 remainMsgValue = msg.value;

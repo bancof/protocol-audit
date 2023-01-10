@@ -39,7 +39,7 @@ contract PolicyLogic is GlobalBeaconProxyImpl, AccessControlUpgradeable {
   }
 
   PoolwidePolicy public poolwide;
-  mapping(bytes32 => mapping(address => uint256)) public maxValuation; // keccak256(Collection) => ERC20 => Value; 0 when forbidden
+  mapping(bytes32 => mapping(address => uint256)) public maxValuation;
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.POLICY_IMPL) {}
 
