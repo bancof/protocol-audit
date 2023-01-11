@@ -13,10 +13,10 @@ contract GlobalBeacon is OwnableUpgradeable {
   mapping(bytes32 => address) public cache;
   bytes32 constant SALT = 0;
 
-  function initialize() public initializer() {
+  function initialize() public initializer {
     __Ownable_init();
   }
-  
+
   function setUint256(bytes32 slot, uint256 val) public onlyOwner {
     StorageSlot.getUint256Slot(slot).value = val;
   }
@@ -36,7 +36,7 @@ contract GlobalBeacon is OwnableUpgradeable {
     setUint256(bytes32(uint256(overrideSlot) + 1), value);
   }
 
-  function setAddress(bytes32 slot, address addr) external onlyOwner() {
+  function setAddress(bytes32 slot, address addr) external onlyOwner {
     if (cache[slot].code.length > 0) {
       GlobalBeaconProxyImpl(cache[slot]).selfDestructIfCache();
     }
@@ -64,11 +64,9 @@ contract GlobalBeacon is OwnableUpgradeable {
     require(beaconImpl.beacon() == this);
 
     try beaconImpl.selfDestructIfCache() {} catch (bytes memory error) {
-        require(bytes4(error) == WillNotSelfDestruct.selector);
+      require(bytes4(error) == WillNotSelfDestruct.selector);
     }
-    
   }
-
 }
 
 

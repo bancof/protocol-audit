@@ -6,7 +6,6 @@ import "../lib/Slots.sol";
 import "../lib/KeyValueStorage.sol";
 import "../globalbeacon/GlobalBeaconProxyImpl.sol";
 import "./BoundNFT.sol";
-import "hardhat/console.sol";
 
 bytes32 constant namespace = keccak256("contract BoundNFTManager");
 

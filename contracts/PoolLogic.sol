@@ -149,18 +149,12 @@ contract PoolLogic is
     return interestInfo.interestRateBP;
   }
 
-  function calculateRenew(
-    Loan memory loan,
-    Loan memory lastLoan
-  ) external view returns (uint256, uint256 /* (amount that will be received by the user, amount to approve/send) */) {
+  function calculateRenew(Loan memory loan, Loan memory lastLoan) external view returns (uint256, uint256) {
     (uint256 receiveAmount, uint256 communityShare, uint256 developerFee) = _calculateRenew(loan, lastLoan);
     return (receiveAmount, communityShare + developerFee);
   }
 
-  function _calculateRenew(
-    Loan memory loan,
-    Loan memory lastLoan
-  ) internal view returns (uint256, uint256, uint256 /* receiveAmount, communityShare, developerFee */) {
+  function _calculateRenew(Loan memory loan, Loan memory lastLoan) internal view returns (uint256, uint256, uint256) {
     (uint256 communityShare, uint256 developerFee) = _calculateDebt(
       loanInterestInfo[keccak256(abi.encode(lastLoan))],
       lastLoan.beginTime,
@@ -172,37 +166,6 @@ contract PoolLogic is
     } else {
       return (0, communityShare - loan.principal, developerFee);
     }
-  }
-
-  function repay(Loan[] memory loans, uint256[][] memory repayAmountsArray) external payable {
-    uint256 remainMsgValue = msg.value;
-    for (uint256 i = 0; i < loans.length; i++) {
-      uint256 usedMsgValue = _repayPartial(loans[i], repayAmountsArray[i], i == (loans.length - 1), remainMsgValue);
-      remainMsgValue -= usedMsgValue;
-    }
-  }
-
-  function liquidate(Loan memory loan) external nonReentrant {
-    require(msg.sender == address(treasury) || msg.sender == owner(), "should be treasury or poolOwner");
-
-    bytes32 loanHash = keccak256(abi.encode(loan));
-
-    require(loanInterestInfo[loanHash].interestRateBP > 0, "Loan does not exist");
-    require(
-      loan.beginTime + loan.duration + loanInterestInfo[loanHash].maxOverdue < block.timestamp,
-      "Can't liquidate yet"
-    );
-
-    delete loanInterestInfo[loanHash];
-    emit Liquidated(loanHash);
-
-    burnBoundNFTs(loan.borrower, loan.collaterals, loan.collateralAmounts);
-    GenericTokenInterface.safeBatchTransferFrom(
-      address(this),
-      address(treasury),
-      loan.collaterals,
-      loan.collateralAmounts
-    );
   }
 
   function _calculateRepaidLoan_inplace(
@@ -239,6 +202,14 @@ contract PoolLogic is
 
     developerFee = (totalInterest * getInterestFeeBP()) / 10000;
     treasuryShare = principal + totalInterest - developerFee;
+  }
+
+  function repay(Loan[] memory loans, uint256[][] memory repayAmountsArray) external payable {
+    uint256 remainMsgValue = msg.value;
+    for (uint256 i = 0; i < loans.length; i++) {
+      uint256 usedMsgValue = _repayPartial(loans[i], repayAmountsArray[i], i == (loans.length - 1), remainMsgValue);
+      remainMsgValue -= usedMsgValue;
+    }
   }
 
   function _repayPartial(
@@ -278,6 +249,35 @@ contract PoolLogic is
       );
     }
     return (treasuryShare + developerFee);
+  }
+
+  function liquidate(Loan[] memory loans) external nonReentrant {
+    for (uint256 i = 0; i < loans.length; i++) {
+      _liquidate(loans[i]);
+    }
+  }
+
+  function _liquidate(Loan memory loan) internal {
+    require(msg.sender == address(treasury) || msg.sender == owner(), "should be treasury or poolOwner");
+
+    bytes32 loanHash = keccak256(abi.encode(loan));
+
+    require(loanInterestInfo[loanHash].interestRateBP > 0, "Loan does not exist");
+    require(
+      loan.beginTime + loan.duration + loanInterestInfo[loanHash].maxOverdue < block.timestamp,
+      "Can't liquidate yet"
+    );
+
+    delete loanInterestInfo[loanHash];
+    emit Liquidated(loanHash);
+
+    burnBoundNFTs(loan.borrower, loan.collaterals, loan.collateralAmounts);
+    GenericTokenInterface.safeBatchTransferFrom(
+      address(this),
+      address(treasury),
+      loan.collaterals,
+      loan.collateralAmounts
+    );
   }
 
   function _takeMoney(

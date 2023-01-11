@@ -52,21 +52,37 @@ contract TreasuryLogic is
     _safeTransferEther(to, amount);
   }
 
-  function withdrawERC20(address to, IERC20 token, uint256 amount) external onlyRole(MONEY_MANAGER) nonReentrant {
-    token.safeTransfer(to, amount);
+  function withdrawERC20(address to, address token, uint256 amount) external onlyRole(MONEY_MANAGER) nonReentrant {
+    IERC20(token).safeTransfer(to, amount);
   }
 
-  function withdrawERC721(address to, IERC721 token, uint256 id) external onlyRole(NFT_MANAGER) nonReentrant {
-    token.safeTransferFrom(address(this), to, id);
+  function withdrawERC721(
+    address[] memory to,
+    address[] memory token,
+    uint256[] memory id
+  ) external onlyRole(NFT_MANAGER) nonReentrant {
+    for (uint256 i = 0; i < to.length; i++) {
+      _withdrawERC721(to[i], token[i], id[i]);
+    }
+  }
+
+  function _withdrawERC721(address to, address token, uint256 id) internal {
+    IERC721(token).safeTransferFrom(address(this), to, id);
   }
 
   function withdrawERC1155(
-    address to,
-    IERC1155 token,
-    uint256 id,
-    uint256 amount
+    address[] memory to,
+    address[] memory token,
+    uint256[] memory id,
+    uint256[] memory amount
   ) external onlyRole(NFT_MANAGER) nonReentrant {
-    token.safeTransferFrom(address(this), to, id, amount, "");
+    for (uint256 i = 0; i < to.length; i++) {
+      _withdrawERC1155(to[i], token[i], id[i], amount[i]);
+    }
+  }
+
+  function _withdrawERC1155(address to, address token, uint256 id, uint256 amount) internal {
+    IERC1155(token).safeTransferFrom(address(this), to, id, amount, "");
   }
 
   function checkBalance(address token, uint256 amount) external view onlyRole(POOL) returns (bool) {
