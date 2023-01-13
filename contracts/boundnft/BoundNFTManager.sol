@@ -13,7 +13,7 @@ abstract contract BoundNFTManager is GlobalBeaconProxyImpl, KeyValueStorage {
   using GenericTokenInterface for GenericTokenInterface.Item;
   using GenericTokenInterface for GenericTokenInterface.Collection;
 
-  event BoundNFTCreated(GenericTokenInterface.Spec spec, address nftAddress);
+  event BoundNFTCreated(address originAddress, address boundNftAddress);
 
   function _deployBoundNFTContract(GenericTokenInterface.Collection memory coll) private returns (BoundNFT) {
     bytes32 slot;
@@ -27,7 +27,7 @@ abstract contract BoundNFTManager is GlobalBeaconProxyImpl, KeyValueStorage {
     BoundNFT bnft = BoundNFT(deployProxy(slot));
     _setAddress(keccak256(abi.encode(namespace, coll.hash())), address(bnft));
     bnft.initialize(coll.addr);
-    emit BoundNFTCreated(coll.spec, address(bnft));
+    emit BoundNFTCreated(coll.addr, address(bnft));
     return bnft;
   }
 
