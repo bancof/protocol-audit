@@ -47,14 +47,11 @@ contract BoundERC1155 is BoundNFT, GlobalBeaconProxyImpl, OwnableUpgradeable {
 
   function balanceOfBatch(address[] memory accounts, uint256[] memory ids) external view returns (uint256[] memory) {
     require(accounts.length == ids.length, "ERC1155: accounts and ids length mismatch");
-
     uint256[] memory batchBalances = new uint256[](accounts.length);
-
     for (uint256 i = 0; i < accounts.length; ++i) {
       require(accounts[i] != address(0), "ERC1155: address zero is not a valid owner");
       batchBalances[i] = _balances[ids[i]][accounts[i]];
     }
-
     return batchBalances;
   }
 

@@ -46,11 +46,9 @@ contract BoundERC721 is BoundNFT, GlobalBeaconProxyImpl, OwnableUpgradeable {
   function mint(address to, uint256 id, uint256 amount) external onlyOwner {
     require(!_exists(id), "ERC721: token already minted");
     require(amount == 1, "Cannot mint more than 1");
-
     unchecked {
       _balances[to] += 1;
     }
-
     _owners[id] = to;
     emit Transfer(address(0), to, id);
   }
@@ -59,7 +57,6 @@ contract BoundERC721 is BoundNFT, GlobalBeaconProxyImpl, OwnableUpgradeable {
     address owner = _owners[id];
     require(owner == from, "Wrong owner");
     require(amount == 1, "Cannot burn more than 1");
-
     unchecked {
       _balances[owner] -= 1;
     }

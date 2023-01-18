@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/utils/Create2.sol";
 import "./GlobalBeaconProxyImpl.sol";
 import "./GlobalBeaconProxy.sol";
+import "hardhat/console.sol";
 
 error WillNotSelfDestruct();
 
@@ -59,17 +60,13 @@ contract GlobalBeacon is OwnableUpgradeable {
 
   function _validateImplementation(address addr) internal {
     require(addr.code.length != 0);
-
     GlobalBeaconProxyImpl beaconImpl = GlobalBeaconProxyImpl(addr);
     require(beaconImpl.beacon() == this);
-
     try beaconImpl.selfDestructIfCache() {} catch (bytes memory error) {
       require(bytes4(error) == WillNotSelfDestruct.selector);
     }
   }
 }
-
-
 
 function polybeaconImplCloner(bytes32 addressSlot) pure returns (bytes memory ret) {
     ret =

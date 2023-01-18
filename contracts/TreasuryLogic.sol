@@ -12,7 +12,6 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./globalbeacon/GlobalBeaconProxyImpl.sol";
 import "./lib/Slots.sol";
-import "./PoolLogic.sol";
 
 contract TreasuryLogic is
   ReentrancyGuardUpgradeable,
@@ -29,8 +28,8 @@ contract TreasuryLogic is
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.TREASURY_IMPL) {}
 
-  function initialize(PoolLogic pool, address moneyManager, address nftManager) external initializer {
-    _grantRole(POOL, address(pool));
+  function initialize(address pool, address moneyManager, address nftManager) external initializer {
+    _grantRole(POOL, pool);
     _grantRole(MONEY_MANAGER, moneyManager);
     _grantRole(NFT_MANAGER, nftManager);
   }

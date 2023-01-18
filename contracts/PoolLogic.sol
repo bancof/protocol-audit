@@ -5,25 +5,16 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import "./globalbeacon/GlobalBeaconProxyImpl.sol";
 import "./lib/Slots.sol";
 import "./lib/GenericTokenInterface.sol";
-import "./TreasuryLogic.sol";
-import "./PolicyLogic.sol";
+import "./lib/PoolPolicy.sol";
 import "./boundnft/BoundNFTManager.sol";
+import "./TreasuryLogic.sol";
 
-contract PoolLogic is
-  ReentrancyGuardUpgradeable,
-  GlobalBeaconProxyImpl,
-  OwnableUpgradeable,
-  BoundNFTManager,
-  ERC1155Holder,
-  ERC721Holder
-{
+contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, ERC1155Holder, ERC721Holder {
   using SafeERC20 for IERC20;
   using ECDSA for bytes32;
   using GenericTokenInterface for GenericTokenInterface.Item;
@@ -52,27 +43,56 @@ contract PoolLogic is
     uint256[] collateralAmounts;
   }
 
-  event Borrowed(PolicyLogic.InterestInfo interestInfo, bytes32 lastLoanHash, Loan newLoan);
+  event Borrowed(PoolPolicy.InterestInfo interestInfo, bytes32 lastLoanHash, Loan newLoan);
   event Repaid(bool isComplete, bytes32 repayLoanHash, LoanPartialUpdateInfo updateInfo);
   event Liquidated(bytes32 loanHash);
+  event Freeze(bool isfrozen);
 
   bytes32 public constant ADMIN = keccak256("ADMIN");
   bool public frozen;
-
   TreasuryLogic public treasury;
-  PolicyLogic public policy;
-
-  mapping(bytes32 => PolicyLogic.InterestInfo) public loanInterestInfo;
+  mapping(bytes32 => PoolPolicy.InterestInfo) public loanInterestInfo;
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.LENDING_POOL_IMPL) {}
 
-  function initialize(TreasuryLogic _treasury, PolicyLogic _policy, address admin) external payable initializer {
-    frozen = false;
-    treasury = _treasury;
-    policy = _policy;
-
-    _transferOwnership(admin);
+  function initialize(
+    Policy calldata initialPolicy,
+    address poolAdmin,
+    TreasuryLogic _treasury
+  ) external payable initializer {
+    _transferOwnership(poolAdmin);
     _takeMoney(getInitialFeeToken(), 0, getInitialFee(), true, msg.value);
+    _setPoolwidePolicy(initialPolicy.poolwide);
+    _setAllowedCollection(initialPolicy.allowedcollections);
+    treasury = _treasury;
+    frozen = false;
+  }
+
+  function borrowPolicyCheck(Loan memory loan) internal view returns (InterestInfo memory) {
+    require(loan.borrower == msg.sender, "Invalid borrower");
+    require(loan.collaterals.length > 0, "collaterals should be exist");
+    require(loan.collaterals.length == loan.valuations.length, "invalid loan term");
+    require(loan.collaterals.length == loan.collateralAmounts.length, "invalid loan term");
+    require(loan.beginTime > block.timestamp - 3 minutes, "Request expired");
+    require(loan.beginTime < block.timestamp + 3 minutes, "Invalid time");
+    uint256 totalValuation = 0;
+    for (uint256 i = 0; i < loan.collaterals.length; i++) {
+      require(loan.collateralAmounts[i] > 0, "Collateral amount cannot be zero");
+      require(
+        loan.valuations[i] <= maxValuation[loan.collaterals[i].collection.hash()][loan.principalToken],
+        "Malformed quotation: valuation is too high"
+      );
+      require(loan.valuations[i] > 0, "Malformed quotation: valuation is too low");
+      totalValuation += loan.valuations[i] * loan.collateralAmounts[i];
+    }
+    uint256 ltvBP = (loan.principal * 10000) / totalValuation;
+    require(ltvBP <= poolwide.maxLtvBP, "Principal amount is too large");
+    require(loan.principal > 0, "The loan is too small");
+    require(loan.collaterals.length <= poolwide.maxCollateralNumPerLoan, "Number of collateral is too large");
+    require(loan.duration > 0, "Debt duration is too short");
+    require(loan.duration <= poolwide.maxDuration, "Debt duration is too long");
+
+    return (poolwide.interestInfo);
   }
 
   function borrow(
@@ -80,53 +100,34 @@ contract PoolLogic is
     bytes32 r,
     bytes32 vs,
     Loan[] memory maybeLastLoan
-  ) external payable nonReentrant returns (uint256) {
+  ) external payable nonReentrant {
     require(!frozen, "Pool frozen");
+    require(treasury.checkBalance(newLoan.principalToken, newLoan.principal), "Insufficient Treasury Balance");
     require(
       keccak256(abi.encode(newLoan)).toEthSignedMessageHash().recover(r, vs) == getOracleAddress(),
       "Invalid signature"
     );
-
-    require(treasury.checkBalance(newLoan.principalToken, newLoan.principal), "Insufficient Treasury Balance");
-
-    require(newLoan.borrower == msg.sender, "Invalid borrower");
-
-    require(newLoan.collaterals.length > 0);
-    require(newLoan.collaterals.length == newLoan.valuations.length);
-    require(newLoan.collaterals.length == newLoan.collateralAmounts.length);
-
-    require(newLoan.beginTime > block.timestamp - 3 minutes, "Request expired");
-    require(newLoan.beginTime < block.timestamp + 3 minutes, "Invalid time");
-
-    PolicyLogic.InterestInfo memory interestInfo = policy.approveLoanAndGetInterestRateBP(newLoan);
-    assert(interestInfo.interestRateBP > 0);
-
+    PoolPolicy.InterestInfo memory interestInfo = borrowPolicyCheck(newLoan);
+    require(interestInfo.interestRateBP > 0, "interest-free loan is not allowed");
     bytes32 loanHash = keccak256(abi.encode(newLoan));
     require(loanInterestInfo[loanHash].interestRateBP == 0, "Loan already exists");
-
     uint256 receiveAmount = newLoan.principal;
     uint256 communityShare = 0;
     uint256 developerFee = 0;
-
     bytes32 lastHash = bytes32(0);
-
     require(maybeLastLoan.length <= 1);
     if (maybeLastLoan.length == 1) {
       Loan memory lastLoan = maybeLastLoan[0];
       lastHash = keccak256(abi.encode(lastLoan));
-
       require(loanInterestInfo[lastHash].interestRateBP != 0, "lastLoan does not exist");
-
       require(lastLoan.borrower == newLoan.borrower);
       require(lastLoan.principalToken == newLoan.principalToken);
       require(keccak256(abi.encode(lastLoan.collaterals)) == keccak256(abi.encode(newLoan.collaterals)));
       require(keccak256(abi.encode(lastLoan.collateralAmounts)) == keccak256(abi.encode(newLoan.collateralAmounts)));
       (receiveAmount, communityShare, developerFee) = _calculateRenew(newLoan, lastLoan);
     }
-
     delete loanInterestInfo[lastHash];
     loanInterestInfo[loanHash] = interestInfo;
-
     if (lastHash == bytes32(0)) {
       GenericTokenInterface.safeBatchTransferFrom(
         msg.sender,
@@ -136,17 +137,12 @@ contract PoolLogic is
       );
       mintBoundNFTs(msg.sender, newLoan.collaterals, newLoan.collateralAmounts);
     }
-
     if (receiveAmount > 0) {
       treasury.lendOut(newLoan.principalToken, msg.sender, receiveAmount);
     }
-
     uint256 principalFee = ((lastHash != bytes32(0) ? getRenewFeeBP() : getBorrowFeeBP()) * newLoan.principal) / 10000;
-
     _takeMoney(newLoan.principalToken, communityShare, developerFee + principalFee, true, msg.value);
-
     emit Borrowed(interestInfo, lastHash, newLoan);
-    return interestInfo.interestRateBP;
   }
 
   function calculateRenew(Loan memory loan, Loan memory lastLoan) external view returns (uint256, uint256) {
@@ -175,13 +171,10 @@ contract PoolLogic is
     completeRepay = true;
     uint256 totalValuations;
     uint256 repayValuations;
-
     for (uint256 i = 0; i < loan.collaterals.length; i++) {
       completeRepay = completeRepay && loan.collateralAmounts[i] == repayAmounts[i];
-
       repayValuations += loan.valuations[i] * repayAmounts[i];
       totalValuations += loan.valuations[i] * loan.collateralAmounts[i];
-
       loan.collateralAmounts[i] -= repayAmounts[i];
     }
     partialPrincipal = (loan.principal * repayValuations) / totalValuations;
@@ -189,7 +182,7 @@ contract PoolLogic is
   }
 
   function _calculateDebt(
-    PolicyLogic.InterestInfo memory interestInfo,
+    PoolPolicy.InterestInfo memory interestInfo,
     uint256 beginTime,
     uint256 duration,
     uint256 principal
@@ -199,7 +192,6 @@ contract PoolLogic is
       ? ((interestInfo.interestRateBP * interestInfo.earlyReturnMultiplierBP) / 10000) * (duration - timeElapsed)
       : ((interestInfo.interestRateBP * interestInfo.lateReturnMultiplierBP) / 10000) * (timeElapsed - duration);
     uint256 totalInterest = (principal * (interestInfo.interestRateBP * timeElapsed + penalty)) / (10000 * 365 days);
-
     developerFee = (totalInterest * getInterestFeeBP()) / 10000;
     treasuryShare = principal + totalInterest - developerFee;
   }
@@ -219,7 +211,7 @@ contract PoolLogic is
     uint256 remainMsgValue
   ) internal returns (uint256) {
     bytes32 repayLoanHash = keccak256(abi.encode(loan));
-    PolicyLogic.InterestInfo memory interestInfo = loanInterestInfo[repayLoanHash];
+    PoolPolicy.InterestInfo memory interestInfo = loanInterestInfo[repayLoanHash];
     require(interestInfo.interestRateBP > 0, "Loan does not exist");
     require(msg.sender == loan.borrower, "You cannot repay other's debt");
     require(loan.beginTime + loan.duration + interestInfo.maxOverdue > block.timestamp, "to late repayment");
@@ -231,13 +223,10 @@ contract PoolLogic is
       partialPrincipal
     );
     require(treasuryShare + developerFee > 0, "No principal to repay");
-
     delete loanInterestInfo[repayLoanHash];
-
     _takeMoney(loan.principalToken, treasuryShare, developerFee, isLast, remainMsgValue);
     burnBoundNFTs(msg.sender, loan.collaterals, repayAmounts);
     GenericTokenInterface.safeBatchTransferFrom(address(this), msg.sender, loan.collaterals, repayAmounts);
-
     if (completeRepay) {
       emit Repaid(true, repayLoanHash, LoanPartialUpdateInfo(repayLoanHash, loan.principal, loan.collateralAmounts));
     } else {
@@ -252,16 +241,14 @@ contract PoolLogic is
   }
 
   function liquidate(Loan[] memory loans) external nonReentrant {
+    require(msg.sender == address(treasury) || msg.sender == owner(), "should be treasury or poolOwner");
     for (uint256 i = 0; i < loans.length; i++) {
       _liquidate(loans[i]);
     }
   }
 
   function _liquidate(Loan memory loan) internal {
-    require(msg.sender == address(treasury) || msg.sender == owner(), "should be treasury or poolOwner");
-
     bytes32 loanHash = keccak256(abi.encode(loan));
-
     require(loanInterestInfo[loanHash].interestRateBP > 0, "Loan does not exist");
     require(
       loan.beginTime + loan.duration + loanInterestInfo[loanHash].maxOverdue < block.timestamp,
@@ -291,7 +278,6 @@ contract PoolLogic is
       require(remainMsgValue >= treasuryShare + developerFee, "insufficient ether");
       _safeTransferEther(address(treasury), treasuryShare);
       _safeTransferEther(getBancofAddress(), developerFee);
-
       if (isLast) {
         _safeTransferEther(msg.sender, remainMsgValue - (treasuryShare + developerFee));
       }
@@ -311,5 +297,6 @@ contract PoolLogic is
   function freeze(bool b) external {
     require(msg.sender == getBancofAddress() || msg.sender == owner(), "should be bancof or poolOwner");
     frozen = b;
+    emit Freeze(b);
   }
 }
