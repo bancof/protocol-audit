@@ -13,18 +13,13 @@ import "./lib/GenericTokenInterface.sol";
 import "./lib/PoolPolicy.sol";
 import "./boundnft/BoundNFTManager.sol";
 import "./TreasuryLogic.sol";
+import "hardhat/console.sol";
 
 contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, ERC1155Holder, ERC721Holder {
   using SafeERC20 for IERC20;
   using ECDSA for bytes32;
   using GenericTokenInterface for GenericTokenInterface.Item;
   using GenericTokenInterface for GenericTokenInterface.Collection;
-
-  struct Collateral {
-    GenericTokenInterface.Item item;
-    uint256 amount;
-    uint256 valueation;
-  }
 
   struct Loan {
     address borrower;
@@ -55,13 +50,8 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.LENDING_POOL_IMPL) {}
 
-  function initialize(
-    Policy calldata initialPolicy,
-    address poolAdmin,
-    TreasuryLogic _treasury
-  ) external payable initializer {
+  function initialize(Policy calldata initialPolicy, address poolAdmin, TreasuryLogic _treasury) external initializer {
     _transferOwnership(poolAdmin);
-    _takeMoney(getInitialFeeToken(), 0, getInitialFee(), true, msg.value);
     _setPoolwidePolicy(initialPolicy.poolwide);
     _setAllowedCollection(initialPolicy.allowedcollections);
     treasury = _treasury;
@@ -196,7 +186,7 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
     treasuryShare = principal + totalInterest - developerFee;
   }
 
-  function repay(Loan[] memory loans, uint256[][] memory repayAmountsArray) external payable {
+  function repay(Loan[] memory loans, uint256[][] memory repayAmountsArray) external payable nonReentrant {
     uint256 remainMsgValue = msg.value;
     for (uint256 i = 0; i < loans.length; i++) {
       uint256 usedMsgValue = _repayPartial(loans[i], repayAmountsArray[i], i == (loans.length - 1), remainMsgValue);
@@ -210,10 +200,10 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
     bool isLast,
     uint256 remainMsgValue
   ) internal returns (uint256) {
+    require(msg.sender == loan.borrower, "You cannot repay other's loan");
     bytes32 repayLoanHash = keccak256(abi.encode(loan));
     PoolPolicy.InterestInfo memory interestInfo = loanInterestInfo[repayLoanHash];
     require(interestInfo.interestRateBP > 0, "Loan does not exist");
-    require(msg.sender == loan.borrower, "You cannot repay other's debt");
     require(loan.beginTime + loan.duration + interestInfo.maxOverdue > block.timestamp, "to late repayment");
     (bool completeRepay, uint256 partialPrincipal) = _calculateRepaidLoan_inplace(loan, repayAmounts);
     (uint256 treasuryShare, uint256 developerFee) = _calculateDebt(
@@ -224,7 +214,6 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
     );
     require(treasuryShare + developerFee > 0, "No principal to repay");
     delete loanInterestInfo[repayLoanHash];
-    _takeMoney(loan.principalToken, treasuryShare, developerFee, isLast, remainMsgValue);
     burnBoundNFTs(msg.sender, loan.collaterals, repayAmounts);
     GenericTokenInterface.safeBatchTransferFrom(address(this), msg.sender, loan.collaterals, repayAmounts);
     if (completeRepay) {
@@ -237,17 +226,16 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
         LoanPartialUpdateInfo(keccak256(abi.encode(loan)), loan.principal, loan.collateralAmounts)
       );
     }
-    return (treasuryShare + developerFee);
+    return _takeMoney(loan.principalToken, treasuryShare, developerFee, isLast, remainMsgValue);
   }
 
-  function liquidate(Loan[] memory loans) external nonReentrant {
-    require(msg.sender == address(treasury) || msg.sender == owner(), "should be treasury or poolOwner");
+  function liquidate(Loan[] memory loans, address transferTo) external nonReentrant onlyOwner {
     for (uint256 i = 0; i < loans.length; i++) {
-      _liquidate(loans[i]);
+      _liquidate(loans[i], transferTo);
     }
   }
 
-  function _liquidate(Loan memory loan) internal {
+  function _liquidate(Loan memory loan, address transferTo) internal {
     bytes32 loanHash = keccak256(abi.encode(loan));
     require(loanInterestInfo[loanHash].interestRateBP > 0, "Loan does not exist");
     require(
@@ -259,12 +247,7 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
     emit Liquidated(loanHash);
 
     burnBoundNFTs(loan.borrower, loan.collaterals, loan.collateralAmounts);
-    GenericTokenInterface.safeBatchTransferFrom(
-      address(this),
-      address(treasury),
-      loan.collaterals,
-      loan.collateralAmounts
-    );
+    GenericTokenInterface.safeBatchTransferFrom(address(this), transferTo, loan.collaterals, loan.collateralAmounts);
   }
 
   function _takeMoney(
@@ -273,7 +256,7 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
     uint256 developerFee,
     bool isLast,
     uint256 remainMsgValue
-  ) internal {
+  ) internal returns (uint256) {
     if (token == address(0)) {
       require(remainMsgValue >= treasuryShare + developerFee, "insufficient ether");
       _safeTransferEther(address(treasury), treasuryShare);
@@ -281,9 +264,14 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
       if (isLast) {
         _safeTransferEther(msg.sender, remainMsgValue - (treasuryShare + developerFee));
       }
+      return treasuryShare + developerFee;
     } else {
       if (treasuryShare > 0) IERC20(token).safeTransferFrom(msg.sender, address(treasury), treasuryShare);
       if (developerFee > 0) IERC20(token).safeTransferFrom(msg.sender, getBancofAddress(), developerFee);
+      if (isLast) {
+        _safeTransferEther(msg.sender, remainMsgValue);
+      }
+      return 0;
     }
   }
 
