@@ -1,30 +1,31 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
+enum Spec {
+  invaild,
+  eth,
+  erc20,
+  erc721,
+  erc1155 /*, cryptopunk, cryptokitty */
+}
+
+struct Collection {
+  address addr;
+  Spec spec;
+}
+
+struct Item {
+  Collection collection;
+  uint256 id;
+}
+
 library GenericTokenInterface {
   using SafeERC20 for IERC20;
-  enum Spec {
-    invaild,
-    eth,
-    erc20,
-    erc721,
-    erc1155 /*, cryptopunk, cryptokitty */
-  }
-
-  struct Collection {
-    address addr;
-    Spec spec;
-  }
-
-  struct Item {
-    Collection collection;
-    uint256 id;
-  }
 
   function hash(Item memory item) internal pure returns (bytes32) {
     return keccak256(abi.encode(item));
@@ -76,11 +77,25 @@ library GenericTokenInterface {
     }
   }
 
-  function safeBatchTransferFrom(address from, address to, Item[] memory items, uint256[] memory amounts) internal {
-    for (uint256 i = 0; i < items.length; i++) {
-      if (amounts[i] > 0) {
-        safeTransferFrom(from, to, items[i], amounts[i]);
+  function safeBatchTransferFrom(
+    address from,
+    address to,
+    Collection memory collection,
+    uint256[] memory ids,
+    uint256[] memory amounts
+  ) internal {
+    Spec spec = collection.spec;
+    address contr = collection.addr;
+    if (spec == Spec.erc721) {
+      for (uint256 i = 0; i < ids.length; ++i) {
+        if (amounts[i] > 0) {
+          IERC721(contr).safeTransferFrom(from, to, ids[i]);
+        }
       }
+    } else if (spec == Spec.erc1155) {
+      IERC1155(contr).safeBatchTransferFrom(from, to, ids, amounts, "");
+    } else {
+      revert("invalid collection");
     }
   }
 }

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
 import "../globalbeacon/GlobalBeaconProxyImpl.sol";
-import "../lib/Slots.sol";
 import "./BoundNFT.sol";
 
 contract BoundERC721 is BoundNFT, GlobalBeaconProxyImpl, OwnableUpgradeable {

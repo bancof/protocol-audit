@@ -1,53 +1,77 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
-import "./PoolLogic.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "./interfaces/IGlobalBeacon.sol";
+import "./interfaces/IPoolLogic.sol";
+import "./interfaces/ITreasuryLogic.sol";
+import "./lib/Slots.sol";
+import "./lib/PolicyStruct.sol";
 
-struct AdminList {
-  address poolAdmin;
-  address moneyManager;
-  address nftManager;
-}
+contract PoolFactory is ReentrancyGuard {
+  struct PoolConfig {
+    PolicyStruct.InitPolicy initPolicy;
+    address poolAdmin;
+    string poolName;
+  }
 
-struct PoolConfig {
-  PoolPolicy.Policy initialPolicy;
-  AdminList admin;
-  string poolName;
-}
-
-contract PoolFactory {
   using SafeERC20 for IERC20;
+  using ECDSA for bytes32;
 
-  GlobalBeacon immutable beacon;
-  event PoolCreated(string poolName, AdminList admins, address pool, address treasury);
+  IGlobalBeacon immutable beacon;
+  event PoolCreated(string poolName, address poolAdmin, address pool, address treasury);
 
-  constructor(GlobalBeacon _beacon) {
-    beacon = _beacon;
+  constructor(address _beacon) {
+    beacon = IGlobalBeacon(_beacon);
   }
 
-  function deployPool(PoolConfig calldata config) external payable {
-    _deployFee();
-    PoolLogic pool = PoolLogic(payable(beacon.deployProxy(Slots.LENDING_POOL_IMPL)));
-    TreasuryLogic treasury = TreasuryLogic(payable(beacon.deployProxy(Slots.TREASURY_IMPL)));
-    pool.initialize(config.initialPolicy, config.admin.poolAdmin, treasury);
-    treasury.initialize(address(pool), config.admin.moneyManager, config.admin.nftManager);
-    emit PoolCreated(config.poolName, config.admin, address(pool), address(treasury));
+  function deployPool(
+    PoolConfig calldata poolConfig,
+    address initDepositToken,
+    uint256 initDeposit,
+    bytes32 r,
+    bytes32 vs
+  ) external payable nonReentrant {
+    require(
+      keccak256(abi.encode(poolConfig)).toEthSignedMessageHash().recover(r, vs) ==
+        beacon.getAddress(Slots.ORACLE_ADDRESS),
+      "Invalid signature"
+    );
+    address pool = beacon.deployProxy(Slots.LENDING_POOL_IMPL);
+    address treasury = beacon.deployProxy(Slots.TREASURY_IMPL);
+    IPoolLogic(pool).initialize(poolConfig.initPolicy, poolConfig.poolAdmin, treasury);
+    ITreasuryLogic(treasury).initialize(pool, poolConfig.poolAdmin);
+    _deployCalculate(initDepositToken, initDeposit, treasury);
+    emit PoolCreated(poolConfig.poolName, poolConfig.poolAdmin, pool, treasury);
   }
 
-  function _deployFee() internal {
+  function _deployCalculate(address initDepositToken, uint256 initDeposit, address treasury) internal {
     address initialFeeToken = beacon.getAddress(Slots.INITIAL_FEE_TOKEN);
     uint256 initialFee = beacon.getUint256(Slots.INITIAL_FEE);
-    if (initialFee > 0) {
-      if (initialFeeToken == address(0)) {
-        require(msg.value >= initialFee, "insufficient ether to make pool");
-        (bool s1, ) = beacon.getAddress(Slots.BANCOF_ADDRESS).call{ value: initialFee }("");
-        (bool s2, ) = msg.sender.call{ value: msg.value - initialFee }("");
-        require(s1 && s2);
-      } else {
+    uint256 ethNeeded = (initialFeeToken == address(0) ? initialFee : 0) +
+      (initDepositToken == address(0) ? initDeposit : 0);
+    require(msg.value >= ethNeeded, "insufficient ether");
+    if (initialFeeToken == address(0)) {
+      _safeTransferEther(beacon.getAddress(Slots.BANCOF_ADDRESS), initialFee);
+    } else {
+      if (initialFee > 0)
         IERC20(initialFeeToken).safeTransferFrom(msg.sender, beacon.getAddress(Slots.BANCOF_ADDRESS), initialFee);
-        (bool s, ) = msg.sender.call{ value: msg.value }("");
-        require(s);
-      }
+    }
+    if (initDepositToken == address(0)) {
+      _safeTransferEther(treasury, initDeposit);
+    } else {
+      if (initDeposit > 0) IERC20(initDepositToken).safeTransferFrom(msg.sender, treasury, initDeposit);
+    }
+    _safeTransferEther(msg.sender, msg.value - ethNeeded);
+  }
+
+  function _safeTransferEther(address to, uint256 amount) internal {
+    if (amount > 0) {
+      (bool s, ) = to.call{ value: amount }("");
+      require(s);
     }
   }
 }

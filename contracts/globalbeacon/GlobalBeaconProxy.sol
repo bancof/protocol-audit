@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/proxy/Proxy.sol";
-import "./GlobalBeacon.sol";
+import "../interfaces/IGlobalBeacon.sol";
 
 contract GlobalBeaconProxy is Proxy {
-  GlobalBeacon immutable beacon;
-  bytes32 immutable slot;
-  address immutable cache;
+  IGlobalBeacon private immutable beacon;
+  bytes32 private immutable slot;
+  address private immutable cache;
 
-  constructor(GlobalBeacon _beacon, bytes32 _slot) {
-    beacon = _beacon;
+  constructor(address _beacon, bytes32 _slot) {
+    beacon = IGlobalBeacon(_beacon);
     slot = _slot;
-    cache = _beacon.cache(_slot);
+    cache = beacon.getCache(_slot);
   }
 
   function _implementation() internal view override returns (address) {

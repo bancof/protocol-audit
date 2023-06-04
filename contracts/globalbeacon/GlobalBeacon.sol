@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/utils/StorageSlot.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/utils/Create2.sol";
-import "./GlobalBeaconProxyImpl.sol";
 import "./GlobalBeaconProxy.sol";
-import "hardhat/console.sol";
+import "../interfaces/IGlobalBeaconProxyImpl.sol";
 
 error WillNotSelfDestruct();
 
 contract GlobalBeacon is OwnableUpgradeable {
-  mapping(bytes32 => address) public cache;
-  bytes32 constant SALT = 0;
+  mapping(bytes32 => address) private cache;
+  bytes32 private constant SALT = 0;
 
   function initialize() public initializer {
     __Ownable_init();
+  }
+
+  function getCache(bytes32 slot) external view returns (address) {
+    return cache[slot];
   }
 
   function setUint256(bytes32 slot, uint256 val) public onlyOwner {
@@ -26,26 +29,26 @@ contract GlobalBeacon is OwnableUpgradeable {
     return StorageSlot.getUint256Slot(slot).value;
   }
 
-  function readDefaultMapUint256(bytes32 slot, bytes32 key) public view returns (uint256) {
-    bytes32 overrideSlot = keccak256(abi.encode(slot, key));
-    return getUint256(overrideSlot) == 0 ? getUint256(slot) : getUint256(bytes32(uint256(overrideSlot) + 1));
-  }
-
-  function writeDefaultMapUint256(bytes32 slot, bytes32 key, uint256 value) public onlyOwner {
-    bytes32 overrideSlot = keccak256(abi.encode(slot, key));
-    setUint256(overrideSlot, 1);
-    setUint256(bytes32(uint256(overrideSlot) + 1), value);
-  }
-
   function setAddress(bytes32 slot, address addr) external onlyOwner {
     if (cache[slot].code.length > 0) {
-      GlobalBeaconProxyImpl(cache[slot]).selfDestructIfCache();
+      IGlobalBeaconProxyImpl(cache[slot]).selfDestructIfCache();
     }
     StorageSlot.getAddressSlot(slot).value = addr;
   }
 
   function getAddress(bytes32 slot) public view returns (address) {
     return StorageSlot.getAddressSlot(slot).value;
+  }
+
+  function writeDefaultMapUint256(bytes32 slot, bytes32 key, uint256 value) external onlyOwner {
+    bytes32 overrideSlot = keccak256(abi.encode(slot, key));
+    setUint256(overrideSlot, 1);
+    setUint256(bytes32(uint256(overrideSlot) + 1), value);
+  }
+  
+  function readDefaultMapUint256(bytes32 slot, bytes32 key) external view returns (uint256) {
+    bytes32 overrideSlot = keccak256(abi.encode(slot, key));
+    return getUint256(overrideSlot) == 0 ? getUint256(slot) : getUint256(bytes32(uint256(overrideSlot) + 1));
   }
 
   function deployCache(bytes32 slot) external {
@@ -55,13 +58,13 @@ contract GlobalBeacon is OwnableUpgradeable {
   }
 
   function deployProxy(bytes32 slot) external returns (address) {
-    return address(new GlobalBeaconProxy(this, slot));
+    return address(new GlobalBeaconProxy(address(this), slot));
   }
 
   function _validateImplementation(address addr) internal {
     require(addr.code.length != 0);
-    GlobalBeaconProxyImpl beaconImpl = GlobalBeaconProxyImpl(addr);
-    require(beaconImpl.beacon() == this);
+    IGlobalBeaconProxyImpl beaconImpl = IGlobalBeaconProxyImpl(addr);
+    require(beaconImpl.getBeacon() == address(this));
     try beaconImpl.selfDestructIfCache() {} catch (bytes memory error) {
       require(bytes4(error) == WillNotSelfDestruct.selector);
     }

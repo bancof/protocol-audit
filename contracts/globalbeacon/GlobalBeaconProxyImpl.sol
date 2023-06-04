@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
-import { WillNotSelfDestruct, GlobalBeacon } from "./GlobalBeacon.sol";
 import "../lib/Slots.sol";
+import "../interfaces/IGlobalBeacon.sol";
+
+error WillNotSelfDestruct();
 
 contract GlobalBeaconProxyImpl {
-  GlobalBeacon public immutable beacon;
-  bytes32 immutable slot;
+  IGlobalBeacon private immutable beacon;
+  bytes32 private immutable slot;
 
   constructor(address _beacon, bytes32 _slot) {
-    beacon = GlobalBeacon(_beacon);
+    beacon = IGlobalBeacon(_beacon);
     slot = _slot;
   }
 
-  function selfDestructIfCache() public {
-    if (msg.sender == address(beacon) && address(this) == beacon.cache(slot)) {
+  function getBeacon() external view returns (address) {
+    return address(beacon);
+  }
+
+  function selfDestructIfCache() external {
+    if (msg.sender == address(beacon) && address(this) == beacon.getCache(slot)) {
       selfdestruct(payable(msg.sender));
     } else {
       revert WillNotSelfDestruct();
@@ -43,6 +49,10 @@ contract GlobalBeaconProxyImpl {
 
   function getBorrowFeeBP() internal view returns (uint256) {
     return beacon.readDefaultMapUint256(Slots.BORROW_FEE_BP, bytes32(uint256(uint160(address(this)))));
+  }
+
+  function getBnplFeeBP() internal view returns (uint256) {
+    return beacon.readDefaultMapUint256(Slots.BNPL_FEE_BP, bytes32(uint256(uint160(address(this)))));
   }
 
   function getRenewFeeBP() internal view returns (uint256) {

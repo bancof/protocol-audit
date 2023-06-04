@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -22,16 +22,14 @@ contract TreasuryLogic is
 {
   using SafeERC20 for IERC20;
 
-  bytes32 public constant MONEY_MANAGER = keccak256("MONEY_MANAGER");
-  bytes32 public constant NFT_MANAGER = keccak256("NFT_MANAGER");
-  bytes32 public constant POOL = keccak256("POOL");
+  bytes32 private constant POOL = keccak256("POOL");
+  bytes32 private constant POOL_ADMIN = keccak256("POOL_ADMIN");
 
   constructor(address globalBeacon) GlobalBeaconProxyImpl(globalBeacon, Slots.TREASURY_IMPL) {}
 
-  function initialize(address pool, address moneyManager, address nftManager) external initializer {
+  function initialize(address pool, address poolAdmin) external initializer {
     _grantRole(POOL, pool);
-    _grantRole(MONEY_MANAGER, moneyManager);
-    _grantRole(NFT_MANAGER, nftManager);
+    _grantRole(POOL_ADMIN, poolAdmin);
   }
 
   function supportsInterface(
@@ -47,11 +45,11 @@ contract TreasuryLogic is
 
   receive() external payable {}
 
-  function withdrawETH(address payable to, uint256 amount) external onlyRole(MONEY_MANAGER) nonReentrant {
+  function withdrawETH(address payable to, uint256 amount) external onlyRole(POOL_ADMIN) nonReentrant {
     _safeTransferEther(to, amount);
   }
 
-  function withdrawERC20(address to, address token, uint256 amount) external onlyRole(MONEY_MANAGER) nonReentrant {
+  function withdrawERC20(address to, address token, uint256 amount) external onlyRole(POOL_ADMIN) nonReentrant {
     IERC20(token).safeTransfer(to, amount);
   }
 
@@ -59,8 +57,8 @@ contract TreasuryLogic is
     address[] memory to,
     address[] memory token,
     uint256[] memory id
-  ) external onlyRole(NFT_MANAGER) nonReentrant {
-    for (uint256 i = 0; i < to.length; i++) {
+  ) external onlyRole(POOL_ADMIN) nonReentrant {
+    for (uint256 i = 0; i < to.length; ++i) {
       _withdrawERC721(to[i], token[i], id[i]);
     }
   }
@@ -74,8 +72,8 @@ contract TreasuryLogic is
     address[] memory token,
     uint256[] memory id,
     uint256[] memory amount
-  ) external onlyRole(NFT_MANAGER) nonReentrant {
-    for (uint256 i = 0; i < to.length; i++) {
+  ) external onlyRole(POOL_ADMIN) nonReentrant {
+    for (uint256 i = 0; i < to.length; ++i) {
       _withdrawERC1155(to[i], token[i], id[i], amount[i]);
     }
   }

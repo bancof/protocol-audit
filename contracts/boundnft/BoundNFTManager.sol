@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
-import "../lib/GenericTokenInterface.sol";
-import "../lib/Slots.sol";
-import "../lib/KeyValueStorage.sol";
 import "../globalbeacon/GlobalBeaconProxyImpl.sol";
+import "../lib/GenericTokenInterface.sol";
+import "../lib/KeyValueStorage.sol";
 import "./BoundNFT.sol";
 
-bytes32 constant namespace = keccak256("contract BoundNFTManager");
-
 abstract contract BoundNFTManager is GlobalBeaconProxyImpl, KeyValueStorage {
-  using GenericTokenInterface for GenericTokenInterface.Item;
-  using GenericTokenInterface for GenericTokenInterface.Collection;
+  bytes32 private constant namespace = keccak256("contract BoundNFTManager");
+
+  using GenericTokenInterface for Item;
+  using GenericTokenInterface for Collection;
 
   event BoundNFTCreated(address originAddress, address boundNftAddress);
 
-  function _deployBoundNFTContract(GenericTokenInterface.Collection memory coll) private returns (BoundNFT) {
+  function _deployBoundNFTContract(Collection memory coll) private returns (BoundNFT) {
     bytes32 slot;
-    if (coll.spec == GenericTokenInterface.Spec.erc721) {
+    if (coll.spec == Spec.erc721) {
       slot = Slots.BOUND_ERC721_IMPL;
-    } else if (coll.spec == GenericTokenInterface.Spec.erc1155) {
+    } else if (coll.spec == Spec.erc1155) {
       slot = Slots.BOUND_ERC1155_IMPL;
     } else {
       revert("Unsupported NFT specification");
@@ -31,7 +30,7 @@ abstract contract BoundNFTManager is GlobalBeaconProxyImpl, KeyValueStorage {
     return bnft;
   }
 
-  function _getBoundNFTContract(GenericTokenInterface.Collection memory coll) private returns (BoundNFT) {
+  function _getBoundNFTContract(Collection memory coll) private returns (BoundNFT) {
     BoundNFT boundNFT = BoundNFT(_getAddress(keccak256(abi.encode(namespace, coll.hash()))));
     if (address(boundNFT) == address(0)) {
       return _deployBoundNFTContract(coll);
@@ -40,18 +39,28 @@ abstract contract BoundNFTManager is GlobalBeaconProxyImpl, KeyValueStorage {
     }
   }
 
-  function mintBoundNFTs(address to, GenericTokenInterface.Item[] memory items, uint256[] memory amounts) internal {
-    for (uint256 i = 0; i < items.length; i++) {
+  function mintBoundNFTs(
+    address to,
+    Collection memory collection,
+    uint256[] memory ids,
+    uint256[] memory amounts
+  ) internal {
+    for (uint256 i = 0; i < ids.length; ++i) {
       if (amounts[i] > 0) {
-        _getBoundNFTContract(items[i].collection).mint(to, items[i].id, amounts[i]);
+        _getBoundNFTContract(collection).mint(to, ids[i], amounts[i]);
       }
     }
   }
 
-  function burnBoundNFTs(address from, GenericTokenInterface.Item[] memory items, uint256[] memory amounts) internal {
-    for (uint256 i = 0; i < items.length; i++) {
+  function burnBoundNFTs(
+    address from,
+    Collection memory collection,
+    uint256[] memory ids,
+    uint256[] memory amounts
+  ) internal {
+    for (uint256 i = 0; i < ids.length; ++i) {
       if (amounts[i] > 0) {
-        _getBoundNFTContract(items[i].collection).burn(from, items[i].id, amounts[i]);
+        _getBoundNFTContract(collection).burn(from, ids[i], amounts[i]);
       }
     }
   }
