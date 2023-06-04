@@ -92,7 +92,7 @@ contract PoolLogic is ReentrancyGuardUpgradeable, PoolPolicy, BoundNFTManager, E
       require(
         loan.valuations[i] <= collateralPolicy[loan.collateralCollection.hash()].maxFpValuation &&
           loan.valuations[i] > 0,
-        "invalid valuation"
+        "current floor price exceeds max floor Price Valuation Term"
       );
       totalValuation += loan.valuations[i] * loan.collateralAmounts[i];
     }
